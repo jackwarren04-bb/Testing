@@ -10,7 +10,7 @@
 @media (prefers-color-scheme:dark){:root{--bg:#121212;--card:#1d1d1d;--ink:#eee;--mute:#999;--line:#2c2c2c;--empty:#242424}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding-bottom:84px}
-header{position:sticky;top:0;z-index:5;background:var(--bg);padding:14px 16px 8px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--line)}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(14px + env(safe-area-inset-top)) 16px 8px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--line)}
 header h1{font-size:18px;margin:0;flex:1}
 select,button,input,textarea{font:inherit;color:inherit}
 select,input[type=text],input[type=date],input[type=time],textarea{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
@@ -134,8 +134,8 @@ input[type=range]{width:100%}
 <div class="sheet" id="setSheet"><div class="panel">
   <h2><span>Settings</span><button class="x" data-close>×</button></h2>
   <div class="row"><label>Rename journal <input type="text" id="jName"></label><button id="jRename">Save</button></div>
-  <div class="row"><label>Daily reminder <input type="time" id="remTime"></label><button id="remSave">Enable</button></div>
-  <p class="hint">Reminder fires while this tab is open (prototype limitation — a real app would use push / OS notifications).</p>
+  <div class="row"><label>Daily reminder <input type="time" id="remTime"></label><button id="remSave" class="pri">Save</button><button id="remOff">Turn off</button></div>
+  <p class="hint" id="remHint">Skipped automatically on days you've already recorded.</p>
   <div class="row"><button id="jDelete">Delete this journal</button></div>
 </div></div>
 
@@ -168,6 +168,11 @@ const DB = (() => {
     clipsFor: (j) => tx('clips', 'readonly', s => s.index('journal').getAll(j)),
   };
 })();
+
+// ---------- Native bridge (Capacitor) ----------
+const Cap = window.Capacitor;
+const isNative = !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform());
+const P = isNative ? Cap.Plugins : {};
 
 // ---------- Helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -324,11 +329,11 @@ $('saveBtn').onclick = async () => {
   $('saveBtn').disabled = true;
   const clip = { key: `${current.id}|${editingDate}`, journal: current.id, date: editingDate,
     blob: draft.blob, start: draft.start, caption: $('caption').value.trim(), thumb: await makeThumb(draft.blob, draft.start) };
-  await DB.put('clips', clip); clips.set(editingDate, clip); render(); closeSheets();
+  await DB.put('clips', clip); clips.set(editingDate, clip); render(); closeSheets(); rescheduleReminders();
 };
 $('deleteBtn').onclick = async () => {
   if (!confirm('Delete this day\'s clip?')) return;
-  await DB.del('clips', `${current.id}|${editingDate}`); clips.delete(editingDate); render(); closeSheets();
+  await DB.del('clips', `${current.id}|${editingDate}`); clips.delete(editingDate); render(); closeSheets(); rescheduleReminders();
 };
 $('addToday').onclick = () => openCapture(todayIso());
 
@@ -406,9 +411,18 @@ $('exportBtn').onclick = async () => {
   const ok = await playMontage();
   rec.stop(); await new Promise(r => rec.onstop = r); $('exportBtn').disabled = false;
   if (!ok) return;
-  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType }));
-  a.download = `${current.name.replace(/\W+/g, '-')}-${$('fromD').value}_${$('toD').value}.${rec.mimeType.includes('mp4') ? 'mp4' : 'webm'}`;
-  a.click(); $('playInfo').textContent = 'Exported ✓';
+  const out = new Blob(chunks, { type: rec.mimeType });
+  const name = `${current.name.replace(/\W+/g, '-')}-${$('fromD').value}_${$('toD').value}.${rec.mimeType.includes('mp4') ? 'mp4' : 'webm'}`;
+  if (isNative) { // WebView can't download blobs: write to cache, then open Android share sheet (Save to Drive/Photos/WhatsApp…)
+    $('playInfo').textContent = 'Preparing…';
+    const data = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result.split(',')[1]); fr.readAsDataURL(out); });
+    const f = await P.Filesystem.writeFile({ path: name, data, directory: 'CACHE' });
+    await P.Share.share({ title: 'Daily Second movie', files: [f.uri] }).catch(() => {});
+    $('playInfo').textContent = 'Exported ✓';
+  } else {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(out); a.download = name; a.click();
+    $('playInfo').textContent = 'Exported ✓';
+  }
 };
 
 // ---------- Journals & settings ----------
@@ -426,11 +440,39 @@ $('jDelete').onclick = async () => {
   for (const d of clips.keys()) await DB.del('clips', `${current.id}|${d}`);
   await DB.del('journals', current.id); delete settings.current; saveSettings(); closeSheets(); await loadJournals();
 };
+// ---------- Reminders ----------
+// Native: schedule one-shot notifications for the next 30 days, skipping days already recorded
+// in ANY journal. Rescheduled on every app open / save / delete, so it stays accurate.
+const REM_BASE = 1000, REM_DAYS = 30;
+async function recordedDates() {
+  const all = await DB.all('clips'); return new Set(all.map(c => c.date));
+}
+async function rescheduleReminders() {
+  if (!isNative) return;
+  const LN = P.LocalNotifications;
+  const pending = await LN.getPending();
+  const ours = pending.notifications.filter(n => n.id >= REM_BASE && n.id < REM_BASE + REM_DAYS + 5);
+  if (ours.length) await LN.cancel({ notifications: ours.map(n => ({ id: n.id })) });
+  if (!settings.reminder) return;
+  const [h, m] = settings.reminder.split(':').map(Number), done = await recordedDates(), now = new Date(), list = [];
+  for (let i = 0; i < REM_DAYS; i++) {
+    const at = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i, h, m);
+    if (at <= now || done.has(iso(at))) continue;
+    list.push({ id: REM_BASE + i, title: 'Daily Second', body: "Don't forget to capture today's second 🎥",
+      schedule: { at, allowWhileIdle: true }, smallIcon: 'ic_stat_notify' });
+  }
+  if (list.length) await LN.schedule({ notifications: list });
+}
 $('remSave').onclick = async () => {
-  if ('Notification' in window && Notification.permission !== 'granted') await Notification.requestPermission();
-  settings.reminder = $('remTime').value; saveSettings(); alert('Reminder set for ' + settings.reminder);
+  if (isNative) {
+    const perm = await P.LocalNotifications.requestPermissions();
+    if (perm.display !== 'granted') return alert('Notifications are blocked. Enable them in Android Settings → Apps → Daily Second → Notifications.');
+  } else if ('Notification' in window && Notification.permission !== 'granted') await Notification.requestPermission();
+  settings.reminder = $('remTime').value; saveSettings(); await rescheduleReminders();
+  alert('Reminder set for ' + settings.reminder + ' every day.');
 };
-setInterval(() => { // reminder check
+$('remOff').onclick = async () => { delete settings.reminder; saveSettings(); await rescheduleReminders(); alert('Reminder turned off.'); };
+if (!isNative) setInterval(() => { // browser fallback: only while tab is open
   if (!settings.reminder || clips.has(todayIso())) return;
   const n = new Date(), hm = `${pad(n.getHours())}:${pad(n.getMinutes())}`;
   if (hm === settings.reminder && settings.lastRem !== todayIso()) {
@@ -439,7 +481,17 @@ setInterval(() => { // reminder check
   }
 }, 30000);
 
-DB.open().then(loadJournals);
+// ---------- Android back button / app resume ----------
+if (isNative) {
+  P.App.addListener('backButton', () => {
+    if (document.querySelector('.sheet.open')) closeSheets(); else P.App.minimizeApp();
+  });
+  P.App.addListener('resume', () => { render(); rescheduleReminders(); });
+  // Tapping a reminder opens the capture screen for today
+  P.LocalNotifications.addListener('localNotificationActionPerformed', () => openCapture(todayIso()));
+}
+
+DB.open().then(loadJournals).then(rescheduleReminders);
 </script>
 </body>
 </html>

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Daily Second</string>
+    <string name="title_activity_main">Daily Second</string>
+    <string name="package_name">com.dailysecond.app</string>
+    <string name="custom_url_scheme">com.dailysecond.app</string>
+</resources>

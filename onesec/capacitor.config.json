@@ -1,0 +1,8 @@
+{
+  "appId": "com.dailysecond.app",
+  "appName": "Daily Second",
+  "webDir": "www",
+  "plugins": {
+    "LocalNotifications": { "smallIcon": "ic_stat_notify", "iconColor": "#E8553D" }
+  }
+}
