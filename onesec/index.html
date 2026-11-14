@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Daily Second</title>
+<meta name="theme-color" content="#111">
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--ink:#1b1b1b;--mute:#777;--line:#e4e2dd;--acc:#e8553d;--acc-ink:#fff;--empty:#ecebe7}
+@media (prefers-color-scheme:dark){:root{--bg:#121212;--card:#1d1d1d;--ink:#eee;--mute:#999;--line:#2c2c2c;--empty:#242424}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding-bottom:84px}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:14px 16px 8px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--line)}
+header h1{font-size:18px;margin:0;flex:1}
+select,button,input,textarea{font:inherit;color:inherit}
+select,input[type=text],input[type=date],input[type=time],textarea{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+button{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;cursor:pointer}
+button.pri{background:var(--acc);color:var(--acc-ink);border-color:var(--acc)}
+button:disabled{opacity:.5}
+main{max-width:720px;margin:0 auto;padding:12px 16px}
+.stats{display:flex;gap:10px;margin:6px 0 14px}
+.stat{flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px}
+.stat b{display:block;font-size:22px}
+.stat span{color:var(--mute);font-size:12px}
+.month{margin-bottom:18px}
+.month h3{margin:0 0 8px;font-size:14px;color:var(--mute);font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.dow{font-size:11px;color:var(--mute);text-align:center}
+.day{aspect-ratio:1;border-radius:8px;background:var(--empty);position:relative;overflow:hidden;cursor:pointer;border:0;padding:0}
+.day.has img{width:100%;height:100%;object-fit:cover;display:block}
+.day .n{position:absolute;left:4px;top:2px;font-size:11px;color:var(--mute)}
+.day.has .n{color:#fff;text-shadow:0 1px 2px #000}
+.day.today{outline:2px solid var(--acc)}
+.day.future{opacity:.35;cursor:default}
+nav.tabs{position:fixed;bottom:0;left:0;right:0;display:flex;gap:8px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:var(--bg);border-top:1px solid var(--line);justify-content:center}
+nav.tabs button{flex:1;max-width:220px}
+.sheet{position:fixed;inset:0;background:#000a;z-index:10;display:none;align-items:flex-end;justify-content:center}
+.sheet.open{display:flex}
+.panel{background:var(--card);width:100%;max-width:560px;max-height:94vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px}
+.panel h2{margin:0 0 10px;font-size:17px;display:flex;justify-content:space-between;align-items:center}
+.vid{width:100%;aspect-ratio:9/16;max-height:55vh;background:#000;border-radius:12px;object-fit:cover;display:block}
+.row{display:flex;gap:8px;align-items:center;margin:10px 0;flex-wrap:wrap}
+.row label{font-size:13px;color:var(--mute)}
+input[type=range]{width:100%}
+.hint{font-size:12px;color:var(--mute)}
+.stage{position:relative}
+.overlay{position:absolute;left:10px;bottom:10px;color:#fff;font-weight:700;text-shadow:0 1px 3px #000;font-size:15px}
+.cap{position:absolute;left:10px;right:10px;top:10px;color:#fff;text-shadow:0 1px 3px #000;font-size:14px}
+.rec-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--acc);margin-right:6px;animation:b 1s infinite}
+@keyframes b{50%{opacity:.2}}
+.x{border:0;background:none;font-size:22px;padding:0 4px}
+.empty-state{text-align:center;color:var(--mute);padding:30px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Daily Second</h1>
+  <select id="journalSel" aria-label="Journal"></select>
+  <button id="newJournal" title="New journal">＋</button>
+  <button id="settingsBtn" title="Settings">⚙</button>
+</header>
+
+<main>
+  <div class="stats">
+    <div class="stat"><b id="sCount">0</b><span>seconds captured</span></div>
+    <div class="stat"><b id="sStreak">0</b><span>day streak</span></div>
+    <div class="stat"><b id="sLen">0:00</b><span>movie length</span></div>
+  </div>
+  <div id="calendar"></div>
+</main>
+
+<nav class="tabs">
+  <button class="pri" id="addToday">● Add today</button>
+  <button id="playBtn">▶ Play movie</button>
+</nav>
+
+<!-- Capture / edit sheet -->
+<div class="sheet" id="capSheet"><div class="panel">
+  <h2><span id="capTitle">Today</span><button class="x" data-close>×</button></h2>
+  <div class="stage">
+    <video id="capVideo" class="vid" playsinline muted></video>
+    <div class="overlay" id="capRecInd" hidden><span class="rec-dot"></span>REC</div>
+  </div>
+  <div class="row">
+    <button id="camBtn">📷 Camera</button>
+    <button id="recBtn" class="pri" disabled>● Record</button>
+    <label><button id="importBtn" type="button">⬆ Import video</button></label>
+    <input type="file" id="fileIn" accept="video/*" hidden>
+  </div>
+  <div id="trimBox" hidden>
+    <div class="row" style="display:block">
+      <label for="trim">Pick your second — start at <b id="trimVal">0.0</b>s</label>
+      <input type="range" id="trim" min="0" max="0" step="0.1" value="0">
+    </div>
+    <div class="row"><button id="previewBtn">▶ Preview 1s</button></div>
+  </div>
+  <div class="row" style="display:block">
+    <label for="caption">Caption (optional)</label>
+    <input type="text" id="caption" maxlength="80" style="width:100%" placeholder="What happened today?">
+  </div>
+  <div class="row">
+    <button class="pri" id="saveBtn" disabled>Save</button>
+    <button id="deleteBtn" hidden>Delete</button>
+  </div>
+  <p class="hint">Records 3 seconds so you can pick the best 1-second moment.</p>
+</div></div>
+
+<!-- Player sheet -->
+<div class="sheet" id="playSheet"><div class="panel">
+  <h2><span>Your movie</span><button class="x" data-close>×</button></h2>
+  <div class="row">
+    <label>From <input type="date" id="fromD"></label>
+    <label>To <input type="date" id="toD"></label>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="showDate" checked> Date stamp</label>
+    <label><input type="checkbox" id="showCap" checked> Captions</label>
+    <label>Seconds/clip
+      <select id="clipLen"><option>1</option><option>1.5</option><option>2</option></select></label>
+  </div>
+  <div class="row">
+    <label>Music <input type="file" id="musicIn" accept="audio/*"></label>
+  </div>
+  <canvas id="canvas" class="vid" width="540" height="960" style="object-fit:contain"></canvas>
+  <div class="row">
+    <button class="pri" id="startPlay">▶ Play</button>
+    <button id="stopPlay">■ Stop</button>
+    <button id="exportBtn">⬇ Export video</button>
+  </div>
+  <p class="hint" id="playInfo"></p>
+</div></div>
+
+<!-- Settings sheet -->
+<div class="sheet" id="setSheet"><div class="panel">
+  <h2><span>Settings</span><button class="x" data-close>×</button></h2>
+  <div class="row"><label>Rename journal <input type="text" id="jName"></label><button id="jRename">Save</button></div>
+  <div class="row"><label>Daily reminder <input type="time" id="remTime"></label><button id="remSave">Enable</button></div>
+  <p class="hint">Reminder fires while this tab is open (prototype limitation — a real app would use push / OS notifications).</p>
+  <div class="row"><button id="jDelete">Delete this journal</button></div>
+</div></div>
+
+<video id="hiddenVid" playsinline muted style="display:none"></video>
+
+<script>
+// ---------- Storage (IndexedDB) ----------
+const DB = (() => {
+  let db;
+  const open = () => new Promise((res, rej) => {
+    const r = indexedDB.open('daily-second', 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      d.createObjectStore('journals', { keyPath: 'id' });
+      const c = d.createObjectStore('clips', { keyPath: 'key' }); // key = journalId|YYYY-MM-DD
+      c.createIndex('journal', 'journal');
+    };
+    r.onsuccess = () => { db = r.result; res(); };
+    r.onerror = () => rej(r.error);
+  });
+  const tx = (store, mode, fn) => new Promise((res, rej) => {
+    const t = db.transaction(store, mode); const s = t.objectStore(store);
+    const out = fn(s); t.oncomplete = () => res(out && out.result); t.onerror = () => rej(t.error);
+  });
+  return {
+    open,
+    all: (store) => tx(store, 'readonly', s => s.getAll()),
+    put: (store, v) => tx(store, 'readwrite', s => s.put(v)),
+    del: (store, k) => tx(store, 'readwrite', s => s.delete(k)),
+    clipsFor: (j) => tx('clips', 'readonly', s => s.index('journal').getAll(j)),
+  };
+})();
+
+// ---------- Helpers ----------
+const $ = (id) => document.getElementById(id);
+const pad = (n) => String(n).padStart(2, '0');
+const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const parseIso = (s) => { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); };
+const todayIso = () => iso(new Date());
+const fmtNice = (s) => parseIso(s).toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+const settings = JSON.parse((() => { try { return localStorage.getItem('ds-settings'); } catch { return null; } })() || '{}');
+const saveSettings = () => { try { localStorage.setItem('ds-settings', JSON.stringify(settings)); } catch {} };
+
+let journals = [], current = null, clips = new Map(); // date -> clip
+
+async function loadJournals() {
+  journals = await DB.all('journals');
+  if (!journals.length) {
+    const j = { id: crypto.randomUUID(), name: 'My life', created: Date.now() };
+    await DB.put('journals', j); journals = [j];
+  }
+  const sel = $('journalSel'); sel.innerHTML = '';
+  journals.forEach(j => sel.add(new Option(j.name, j.id)));
+  current = journals.find(j => j.id === settings.current) || journals[0];
+  sel.value = current.id;
+  await loadClips();
+}
+async function loadClips() {
+  const list = await DB.clipsFor(current.id);
+  clips = new Map(list.map(c => [c.date, c]));
+  render();
+}
+
+// ---------- Calendar render ----------
+let thumbUrls = [];
+function render() {
+  thumbUrls.forEach(URL.revokeObjectURL); thumbUrls = [];
+  const cal = $('calendar'); cal.innerHTML = '';
+  const today = new Date();
+  const dates = [...clips.keys()].sort();
+  const start = dates.length ? parseIso(dates[0]) : today;
+  const first = new Date(Math.min(start, new Date(today.getFullYear(), today.getMonth(), 1)));
+  // newest month first
+  for (let m = new Date(today.getFullYear(), today.getMonth(), 1); m >= new Date(first.getFullYear(), first.getMonth(), 1); m.setMonth(m.getMonth() - 1)) {
+    const sec = document.createElement('section'); sec.className = 'month';
+    sec.innerHTML = `<h3>${m.toLocaleDateString(undefined, { month:'long', year:'numeric' })}</h3>`;
+    const g = document.createElement('div'); g.className = 'grid';
+    'SMTWTFS'.split('').forEach(c => { const e = document.createElement('div'); e.className = 'dow'; e.textContent = c; g.appendChild(e); });
+    for (let i = 0; i < m.getDay(); i++) g.appendChild(document.createElement('div'));
+    const days = new Date(m.getFullYear(), m.getMonth()+1, 0).getDate();
+    for (let d = 1; d <= days; d++) {
+      const date = new Date(m.getFullYear(), m.getMonth(), d), k = iso(date);
+      const b = document.createElement('button'); b.className = 'day';
+      const c = clips.get(k);
+      if (c) { b.classList.add('has'); const u = URL.createObjectURL(c.thumb); thumbUrls.push(u); b.innerHTML = `<img src="${u}" alt="">`; }
+      if (k === todayIso()) b.classList.add('today');
+      if (date > today) b.classList.add('future'); else b.onclick = () => openCapture(k);
+      b.insertAdjacentHTML('beforeend', `<span class="n">${d}</span>`);
+      b.setAttribute('aria-label', fmtNice(k) + (c ? ', has clip' : ''));
+      g.appendChild(b);
+    }
+    sec.appendChild(g); cal.appendChild(sec);
+  }
+  // stats
+  $('sCount').textContent = clips.size;
+  let streak = 0, d = new Date();
+  if (!clips.has(iso(d))) d.setDate(d.getDate() - 1); // streak still alive if today not yet recorded
+  while (clips.has(iso(d))) { streak++; d.setDate(d.getDate() - 1); }
+  $('sStreak').textContent = streak;
+  $('sLen').textContent = `${Math.floor(clips.size/60)}:${pad(clips.size%60)}`;
+  $('addToday').textContent = clips.has(todayIso()) ? '✎ Edit today' : '● Add today';
+}
+
+// ---------- Sheets ----------
+document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => closeSheets());
+function closeSheets() {
+  document.querySelectorAll('.sheet').forEach(s => s.classList.remove('open'));
+  stopCam(); stopPlayback();
+}
+
+// ---------- Capture ----------
+let stream = null, recorder = null, draft = null, editingDate = null, draftUrl = null;
+const capVideo = $('capVideo');
+
+function setDraft(blob) {
+  draft = { blob, start: 0 };
+  if (draftUrl) URL.revokeObjectURL(draftUrl);
+  draftUrl = URL.createObjectURL(blob);
+  stopCam();
+  capVideo.srcObject = null; capVideo.src = draftUrl; capVideo.muted = false;
+  capVideo.onloadedmetadata = async () => {
+    let dur = capVideo.duration;
+    if (!isFinite(dur)) { // MediaRecorder webm quirk: force duration computation
+      capVideo.currentTime = 1e6; await new Promise(r => capVideo.onseeked = r); dur = capVideo.duration; capVideo.onseeked = null;
+    }
+    const t = $('trim'); t.max = Math.max(0, dur - 1).toFixed(1); t.value = Math.min(draft.start, t.max);
+    $('trimVal').textContent = (+t.value).toFixed(1);
+    capVideo.currentTime = +t.value;
+    $('trimBox').hidden = false; $('saveBtn').disabled = false;
+  };
+}
+
+async function openCapture(date) {
+  editingDate = date; draft = null;
+  $('capTitle').textContent = date === todayIso() ? 'Today' : fmtNice(date);
+  $('trimBox').hidden = true; $('saveBtn').disabled = true; $('recBtn').disabled = true;
+  const c = clips.get(date);
+  $('caption').value = c ? c.caption || '' : '';
+  $('deleteBtn').hidden = !c;
+  capVideo.removeAttribute('src'); capVideo.srcObject = null;
+  $('capSheet').classList.add('open');
+  if (c) { setDraft(c.blob); draft.start = c.start; }
+}
+
+async function startCam() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1080 }, height: { ideal: 1920 } }, audio: true });
+  } catch (e) { alert('Camera unavailable: ' + e.message + '\nYou can import a video instead.'); return; }
+  capVideo.removeAttribute('src'); capVideo.srcObject = stream; capVideo.muted = true; capVideo.play();
+  $('recBtn').disabled = false; $('trimBox').hidden = true;
+}
+function stopCam() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } $('recBtn').disabled = true; }
+
+function record() {
+  const mime = ['video/webm;codecs=vp9,opus','video/webm','video/mp4'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+  const chunks = []; recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+  recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+  recorder.onstop = () => { $('capRecInd').hidden = true; setDraft(new Blob(chunks, { type: recorder.mimeType })); };
+  recorder.start(); $('capRecInd').hidden = false; $('recBtn').disabled = true;
+  setTimeout(() => recorder.state === 'recording' && recorder.stop(), 3000);
+}
+
+$('camBtn').onclick = startCam;
+$('recBtn').onclick = record;
+$('importBtn').onclick = () => $('fileIn').click();
+$('fileIn').onchange = e => { const f = e.target.files[0]; if (f) setDraft(f); e.target.value = ''; };
+$('trim').oninput = e => { draft.start = +e.target.value; $('trimVal').textContent = draft.start.toFixed(1); capVideo.currentTime = draft.start; };
+$('previewBtn').onclick = () => {
+  capVideo.currentTime = draft.start; capVideo.play();
+  const stop = () => { if (capVideo.currentTime >= draft.start + 1) { capVideo.pause(); capVideo.removeEventListener('timeupdate', stop); } };
+  capVideo.addEventListener('timeupdate', stop);
+};
+
+async function makeThumb(blob, t) {
+  const v = $('hiddenVid'), u = URL.createObjectURL(blob);
+  v.src = u; await new Promise(r => v.onloadeddata = r);
+  v.currentTime = t + 0.5; await new Promise(r => v.onseeked = r);
+  const c = document.createElement('canvas'); c.width = 160; c.height = 160;
+  const s = Math.min(v.videoWidth, v.videoHeight);
+  c.getContext('2d').drawImage(v, (v.videoWidth - s)/2, (v.videoHeight - s)/2, s, s, 0, 0, 160, 160);
+  URL.revokeObjectURL(u);
+  return new Promise(r => c.toBlob(r, 'image/jpeg', 0.8));
+}
+
+$('saveBtn').onclick = async () => {
+  $('saveBtn').disabled = true;
+  const clip = { key: `${current.id}|${editingDate}`, journal: current.id, date: editingDate,
+    blob: draft.blob, start: draft.start, caption: $('caption').value.trim(), thumb: await makeThumb(draft.blob, draft.start) };
+  await DB.put('clips', clip); clips.set(editingDate, clip); render(); closeSheets();
+};
+$('deleteBtn').onclick = async () => {
+  if (!confirm('Delete this day\'s clip?')) return;
+  await DB.del('clips', `${current.id}|${editingDate}`); clips.delete(editingDate); render(); closeSheets();
+};
+$('addToday').onclick = () => openCapture(todayIso());
+
+// ---------- Montage playback / export ----------
+const canvas = $('canvas'), ctx = canvas.getContext('2d');
+let playing = false, musicUrl = null, musicEl = null;
+
+function drawCover(v) {
+  const cw = canvas.width, ch = canvas.height, vr = v.videoWidth / v.videoHeight, cr = cw / ch;
+  let sw = v.videoWidth, sh = v.videoHeight, sx = 0, sy = 0;
+  if (vr > cr) { sw = sh * cr; sx = (v.videoWidth - sw) / 2; } else { sh = sw / cr; sy = (v.videoHeight - sh) / 2; }
+  ctx.drawImage(v, sx, sy, sw, sh, 0, 0, cw, ch);
+}
+function drawText(c) {
+  ctx.fillStyle = '#fff'; ctx.shadowColor = '#000'; ctx.shadowBlur = 6;
+  if ($('showDate').checked) { ctx.font = 'bold 30px system-ui'; ctx.fillText(fmtNice(c.date), 24, canvas.height - 30); }
+  if ($('showCap').checked && c.caption) { ctx.font = '28px system-ui'; ctx.fillText(c.caption, 24, 50, canvas.width - 48); }
+  ctx.shadowBlur = 0;
+}
+
+async function playMontage(onFrame) {
+  const from = $('fromD').value, to = $('toD').value, len = +$('clipLen').value;
+  const list = [...clips.values()].filter(c => c.date >= from && c.date <= to).sort((a, b) => a.date < b.date ? -1 : 1);
+  if (!list.length) { $('playInfo').textContent = 'No clips in that range.'; return false; }
+  playing = true; $('playInfo').textContent = `${list.length} days`;
+  if (musicEl) { musicEl.currentTime = 0; musicEl.play(); }
+  const v = document.createElement('video'); v.muted = true; v.playsInline = true;
+  for (let i = 0; i < list.length && playing; i++) {
+    const c = list[i], u = URL.createObjectURL(c.blob);
+    v.src = u; await new Promise(r => v.onloadeddata = r);
+    v.currentTime = c.start; await new Promise(r => v.onseeked = r);
+    await v.play();
+    const t0 = performance.now();
+    await new Promise(r => {
+      const tick = () => {
+        if (!playing || performance.now() - t0 >= len * 1000 || v.ended) return r();
+        drawCover(v); drawText(c); onFrame && onFrame(); requestAnimationFrame(tick);
+      };
+      tick();
+    });
+    v.pause(); URL.revokeObjectURL(u);
+    $('playInfo').textContent = `${i + 1} / ${list.length} — ${fmtNice(c.date)}`;
+  }
+  if (musicEl) musicEl.pause();
+  playing = false; return true;
+}
+function stopPlayback() { playing = false; if (musicEl) musicEl.pause(); }
+
+$('playBtn').onclick = () => {
+  const dates = [...clips.keys()].sort();
+  $('fromD').value = dates[0] || todayIso(); $('toD').value = dates.at(-1) || todayIso();
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  $('playInfo').textContent = `${clips.size} clips in this journal`;
+  $('playSheet').classList.add('open');
+};
+$('startPlay').onclick = () => { if (!playing) playMontage(); };
+$('stopPlay').onclick = stopPlayback;
+$('musicIn').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  if (musicUrl) URL.revokeObjectURL(musicUrl);
+  musicUrl = URL.createObjectURL(f); musicEl = new Audio(musicUrl); musicEl.loop = true;
+};
+$('exportBtn').onclick = async () => {
+  if (playing) return;
+  const vs = canvas.captureStream(30);
+  if (musicEl) { // mix music into export
+    const ac = new AudioContext(), src = ac.createMediaElementSource(musicEl), dst = ac.createMediaStreamDestination();
+    src.connect(dst); src.connect(ac.destination); dst.stream.getAudioTracks().forEach(t => vs.addTrack(t));
+    musicEl._ac = ac;
+  }
+  const mime = ['video/webm;codecs=vp9','video/webm','video/mp4'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+  const rec = new MediaRecorder(vs, mime ? { mimeType: mime } : {}), chunks = [];
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.start(); $('exportBtn').disabled = true;
+  const ok = await playMontage();
+  rec.stop(); await new Promise(r => rec.onstop = r); $('exportBtn').disabled = false;
+  if (!ok) return;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType }));
+  a.download = `${current.name.replace(/\W+/g, '-')}-${$('fromD').value}_${$('toD').value}.${rec.mimeType.includes('mp4') ? 'mp4' : 'webm'}`;
+  a.click(); $('playInfo').textContent = 'Exported ✓';
+};
+
+// ---------- Journals & settings ----------
+$('journalSel').onchange = async e => { current = journals.find(j => j.id === e.target.value); settings.current = current.id; saveSettings(); await loadClips(); };
+$('newJournal').onclick = async () => {
+  const name = prompt('Name your new journal (e.g. "Baby\'s first year", "Travel 2026")'); if (!name) return;
+  const j = { id: crypto.randomUUID(), name, created: Date.now() }; await DB.put('journals', j);
+  settings.current = j.id; saveSettings(); await loadJournals();
+};
+$('settingsBtn').onclick = () => { $('jName').value = current.name; $('remTime').value = settings.reminder || '20:00'; $('setSheet').classList.add('open'); };
+$('jRename').onclick = async () => { current.name = $('jName').value.trim() || current.name; await DB.put('journals', current); await loadJournals(); };
+$('jDelete').onclick = async () => {
+  if (journals.length < 2) return alert('You need at least one journal.');
+  if (!confirm(`Delete "${current.name}" and all its clips?`)) return;
+  for (const d of clips.keys()) await DB.del('clips', `${current.id}|${d}`);
+  await DB.del('journals', current.id); delete settings.current; saveSettings(); closeSheets(); await loadJournals();
+};
+$('remSave').onclick = async () => {
+  if ('Notification' in window && Notification.permission !== 'granted') await Notification.requestPermission();
+  settings.reminder = $('remTime').value; saveSettings(); alert('Reminder set for ' + settings.reminder);
+};
+setInterval(() => { // reminder check
+  if (!settings.reminder || clips.has(todayIso())) return;
+  const n = new Date(), hm = `${pad(n.getHours())}:${pad(n.getMinutes())}`;
+  if (hm === settings.reminder && settings.lastRem !== todayIso()) {
+    settings.lastRem = todayIso(); saveSettings();
+    if ('Notification' in window && Notification.permission === 'granted') new Notification('Daily Second', { body: "Don't forget today's second!" });
+  }
+}, 30000);
+
+DB.open().then(loadJournals);
+</script>
+</body>
+</html>
