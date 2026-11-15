@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tee Shop</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>Tee Shop</h1>
+    <button id="cartBtn" class="secondary">Cart (<span id="cartCount">0</span>)</button>
+  </header>
+  <main>
+    <section class="hero">
+      <h2>Good tees. No fuss.</h2>
+      <p class="muted">Pick a shirt, pick a size, done.</p>
+    </section>
+    <div id="grid" class="grid"></div>
+  </main>
+
+  <div id="overlay" class="overlay"></div>
+
+  <div id="modal" class="modal" role="dialog" aria-modal="true"></div>
+
+  <aside id="drawer" class="drawer" aria-label="Cart">
+    <div class="head"><strong>Your cart</strong><button class="secondary" id="closeCart">Close</button></div>
+    <div class="items" id="cartItems"></div>
+    <div class="foot" id="cartFoot"></div>
+  </aside>
+
+  <script src="/shared.js"></script>
+  <script>
+    let products = [];
+    let cart = [];
+    try { cart = JSON.parse(localStorage.getItem('cart') || '[]'); } catch {}
+    const saveCart = () => { try { localStorage.setItem('cart', JSON.stringify(cart)); } catch {} renderCart(); };
+    const $ = (id) => document.getElementById(id);
+
+    async function loadProducts() {
+      products = await api('/api/products');
+      cart = cart.filter((c) => products.some((p) => p.id === c.id));
+      $('grid').innerHTML = products.length ? products.map((p) => {
+        const inStock = SIZES.some((s) => p.stock[s] > 0);
+        return `<div class="card" data-id="${p.id}">${thumb(p)}
+          <div class="info"><span>${esc(p.name)}${inStock ? '' : ' <span class="muted">— sold out</span>'}</span><span class="price">${money(p.price)}</span></div></div>`;
+      }).join('') : '<p class="muted">No products yet. Add some in the admin panel.</p>';
+      renderCart();
+    }
+
+    $('grid').addEventListener('click', (e) => {
+      const card = e.target.closest('.card');
+      if (card) openProduct(card.dataset.id);
+    });
+
+    function openProduct(id) {
+      const p = products.find((x) => x.id === id);
+      let size = null;
+      $('modal').innerHTML = `<div class="body">${thumb(p)}
+        <div>
+          <h2 style="margin:0">${esc(p.name)}</h2>
+          <p class="price" style="font-size:1.25rem">${money(p.price)}</p>
+          <p class="muted">${esc(p.description)}</p>
+          <label>Size</label>
+          <div class="sizes">${SIZES.map((s) => `<button data-size="${s}" ${p.stock[s] > 0 ? '' : 'disabled title="Out of stock"'}>${s}</button>`).join('')}</div>
+          <p class="err" id="sizeErr"></p>
+          <div class="row"><button id="addBtn">Add to cart</button><button class="secondary" id="closeModal">Close</button></div>
+        </div></div>`;
+      $('modal').querySelector('.sizes').onclick = (e) => {
+        const b = e.target.closest('button[data-size]'); if (!b || b.disabled) return;
+        size = b.dataset.size;
+        $('modal').querySelectorAll('.sizes button').forEach((x) => x.classList.toggle('sel', x === b));
+        $('sizeErr').textContent = `${p.stock[size]} left in ${size}`;
+      };
+      $('addBtn').onclick = () => {
+        if (!size) return ($('sizeErr').textContent = 'Please choose a size');
+        const line = cart.find((c) => c.id === id && c.size === size);
+        const have = line ? line.qty : 0;
+        if (have + 1 > p.stock[size]) return ($('sizeErr').textContent = 'No more stock in that size');
+        line ? line.qty++ : cart.push({ id, size, qty: 1 });
+        saveCart(); closeAll(); toast('Added to cart');
+      };
+      $('closeModal').onclick = closeAll;
+      $('modal').classList.add('open'); $('overlay').classList.add('open');
+    }
+
+    function renderCart() {
+      $('cartCount').textContent = cart.reduce((s, c) => s + c.qty, 0);
+      if (!cart.length) {
+        $('cartItems').innerHTML = '<p class="muted">Your cart is empty.</p>';
+        $('cartFoot').innerHTML = '';
+        return;
+      }
+      let total = 0;
+      $('cartItems').innerHTML = cart.map((c, i) => {
+        const p = products.find((x) => x.id === c.id);
+        total += p.price * c.qty;
+        return `<div class="line">${thumb(p)}<div class="grow"><div>${esc(p.name)}</div><div class="muted">Size ${c.size} · ${money(p.price)}</div></div>
+          <div class="qty"><button class="secondary" data-dec="${i}">−</button>${c.qty}<button class="secondary" data-inc="${i}">+</button></div></div>`;
+      }).join('');
+      $('cartFoot').innerHTML = `<div style="display:flex;justify-content:space-between"><strong>Total</strong><strong>${money(total)}</strong></div>
+        <form id="checkout">
+          <input name="name" placeholder="Full name" required>
+          <input name="email" type="email" placeholder="Email" required style="margin-top:8px">
+          <textarea name="address" placeholder="Shipping address" rows="2" style="margin-top:8px"></textarea>
+          <p class="err" id="checkoutErr"></p>
+          <button style="width:100%">Place order</button>
+          <p class="muted" style="font-size:.8rem;margin:6px 0 0">Demo checkout — no payment is taken.</p>
+        </form>`;
+      $('checkout').onsubmit = async (e) => {
+        e.preventDefault();
+        const f = new FormData(e.target);
+        try {
+          const order = await api('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: cart, customer: Object.fromEntries(f) }) });
+          cart = []; saveCart(); closeAll(); loadProducts();
+          toast(`Order ${order.id} placed — thanks!`);
+        } catch (err) { $('checkoutErr').textContent = err.message; }
+      };
+    }
+
+    $('cartItems').addEventListener('click', (e) => {
+      const inc = e.target.dataset.inc, dec = e.target.dataset.dec;
+      if (inc !== undefined) {
+        const c = cart[inc], p = products.find((x) => x.id === c.id);
+        if (c.qty < p.stock[c.size]) c.qty++; else toast('No more stock in that size');
+      } else if (dec !== undefined) {
+        cart[dec].qty--; if (cart[dec].qty <= 0) cart.splice(dec, 1);
+      } else return;
+      saveCart();
+    });
+
+    function closeAll() { ['modal', 'overlay', 'drawer'].forEach((id) => $(id).classList.remove('open')); }
+    $('overlay').onclick = closeAll;
+    $('closeCart').onclick = closeAll;
+    $('cartBtn').onclick = () => { $('drawer').classList.add('open'); $('overlay').classList.add('open'); };
+    document.addEventListener('keydown', (e) => e.key === 'Escape' && closeAll());
+    loadProducts();
+  </script>
+</body>
+</html>
